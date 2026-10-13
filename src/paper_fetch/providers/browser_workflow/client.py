@@ -248,7 +248,9 @@ class BrowserWorkflowClient(ProviderClient):
             seed_urls_getter=lambda: [discovery["source_url"]],
             browser_user_agent=self.browser_user_agent,
             runtime_context=context,
-            browser_options=BrowserDocumentFetcherOptions(runtime_config=runtime),
+            browser_options=BrowserDocumentFetcherOptions(
+                runtime_config=runtime, file_fetch_mode="page_click"
+            ),
         )
         try:
             result = self.deps.download_assets(
@@ -871,7 +873,8 @@ class BrowserWorkflowClient(ProviderClient):
             runtime_context=context,
             use_runtime_shared_browser=True,
             browser_options=BrowserDocumentFetcherOptions(
-                runtime_config=request.get("browser_config")
+                runtime_config=request.get("browser_config"),
+                file_fetch_mode="page_click",
             ),
             thread_local=True,
         )

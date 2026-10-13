@@ -1,6 +1,5 @@
 """Actual PDF backend and controlled browser/file publication contracts."""
 
-from contextlib import contextmanager
 from dataclasses import replace
 import hashlib
 import io
@@ -314,10 +313,15 @@ def test_wiley_actual_panel_click_redirect_response_and_download_cleanup(
     file_url = (
         "https://onlinelibrary.wiley.com/action/downloadSupplement?file=sup-1.csv"
     )
-    initial_request = SimpleNamespace(url=file_url, redirected_from=None)
-    redirected = SimpleNamespace(
+    page = Mock()
+    page.url = "https://onlinelibrary.wiley.com/doi/full/10.1111/example"
+    initial_request = Mock(
+        url=file_url, redirected_from=None, frame=SimpleNamespace(page=page)
+    )
+    redirected = Mock(
         url="https://publisher.test/authorized/sup-1.csv",
         redirected_from=initial_request,
+        frame=SimpleNamespace(page=page),
     )
     response = SimpleNamespace(
         request=redirected,
@@ -327,27 +331,42 @@ def test_wiley_actual_panel_click_redirect_response_and_download_cleanup(
         headers={"content-type": "text/csv"},
     )
     download = SimpleNamespace(
-        path=lambda: str(temporary), cancel=Mock(), delete=lambda: temporary.unlink()
+        url=redirected.url,
+        path=lambda: str(temporary),
+        cancel=Mock(),
+        delete=lambda: temporary.unlink(),
     )
-    page = Mock()
-    page.url = "https://onlinelibrary.wiley.com/doi/full/10.1111/example"
-    link = page.locator.return_value.locator.return_value.first
+    link = page.locator.return_value.first.locator.return_value.first
     link.is_visible.return_value = False
+    link.get_attribute.side_effect = lambda name, **kwargs: (
+        file_url if name == "href" else None
+    )
     link.locator.return_value.locator.return_value.first.get_attribute.return_value = (
         "false"
     )
-    callbacks = {}
-    page.on.side_effect = lambda event, callback: callbacks.update({event: callback})
-    link.evaluate.side_effect = lambda *args, **kwargs: callbacks["response"](response)
+    page_callbacks, context_callbacks = {}, {}
+    page.on.side_effect = lambda event, callback: page_callbacks.update(
+        {event: callback}
+    )
+    browser_context = Mock()
+    browser_context.on.side_effect = lambda event, callback: context_callbacks.update(
+        {event: callback}
+    )
 
-    @contextmanager
-    def pending(*args, **kwargs):
-        yield SimpleNamespace(value=download)
+    def activate(*args, **kwargs):
+        context_callbacks["request"](initial_request)
+        context_callbacks["request"](redirected)
+        context_callbacks["response"](response)
+        page_callbacks["download"](download)
 
-    page.expect_download.side_effect = pending
-    page.expect_event.side_effect = pending
+    link.evaluate.side_effect = activate
+    from paper_fetch.providers.browser_workflow.fetchers import click as click_owner
+    from paper_fetch.providers.browser_workflow.fetchers.context import (
+        BrowserDocumentFetcherOptions,
+    )
+
     monkeypatch.setattr(
-        file_owner,
+        click_owner,
         "wait_for_atypon_body_dom_ready",
         lambda *args, **kwargs: SimpleNamespace(ready=True),
     )
@@ -356,13 +375,17 @@ def test_wiley_actual_panel_click_redirect_response_and_download_cleanup(
         browser_context_seed_getter=lambda: {"browser_final_url": page.url},
         seed_urls_getter=lambda: [page.url],
         runtime_context=context,
+        browser_options=BrowserDocumentFetcherOptions(
+            runtime_config=SimpleNamespace(provider="wiley"),
+            file_fetch_mode="page_click",
+        ),
     )
+    fetcher._context = browser_context
     fetcher._page = page
-    fetched = fetcher._fetch_wiley_with_page_click(
-        file_url, {"filename_hint": "sup-1.csv"}
-    )
+    fetched = fetcher(file_url, {"filename_hint": "sup-1.csv"})
     assert fetched is not None
     assert fetched["body"] == payload
+    assert fetched["_paper_fetch_asset_route_diagnostics"]["mode"] == "page_click"
     assert not temporary.exists()
     link.locator.return_value.locator.return_value.first.click.assert_called()
     assets = bind_supplementary_assets(
@@ -410,12 +433,13 @@ def test_provider_local_discovery_and_original_si_persistence(
             "body": payload,
         }
     )
+    file_fetcher_factory = Mock(return_value=file_fetcher)
     deps = replace(
         default_browser_workflow_deps(),
         load_runtime_config=Mock(return_value=SimpleNamespace()),
         ensure_runtime_ready=Mock(),
         fetch_html_with_browser=html_fetcher,
-        _build_shared_browser_file_fetcher=Mock(return_value=file_fetcher),
+        _build_shared_browser_file_fetcher=file_fetcher_factory,
     )
     context = RuntimeContext(env={}, transport=Mock(), download_dir=tmp_path)
     client = client_type(Mock(), {}, deps=deps)
@@ -428,6 +452,10 @@ def test_provider_local_discovery_and_original_si_persistence(
     assert discovery["assets"][0]["paper_doi"] == doi
     downloaded = client.download_supplementary_files(
         doi, {}, discovery, tmp_path, context=context
+    )
+    assert (
+        file_fetcher_factory.call_args.kwargs["browser_options"].file_fetch_mode
+        == "page_click"
     )
     assert not downloaded["asset_failures"]
     item = downloaded["assets"][0]

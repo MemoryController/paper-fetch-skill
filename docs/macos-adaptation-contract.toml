@@ -55,10 +55,13 @@ validated_purge_paths = true
 # T&F 图片导航在 commit 后验收原始响应，避免图片文档 DOMContentLoaded 超时；
 # 沿用 Camoufox、同一资产预算和 MIME/字节验收，Linux 浏览器测试不替代原生 gate。
 # 原始 PDF 下载显式 raw-only，不进入正文转换；SI 保留原字节，不转换或解压。
-# Wiley SI 复用 supporting panel 同会话点击与重定向链 response/download，
-# 临时下载清理前获取受限字节，经共享预算、校验及取消 fence 原子发布持久文件。
+# 原文件临时下载清理前获取受限字节，经共享预算、校验及取消 fence 原子发布持久文件。
 # 内部 browser seed 不公开；原文件已接受 seed 只在同 request/client/DOI 内衔接 SI，
 # 不持久化或重置共享期限；Linux 受控协议证据不替代上述 macOS 原生 gate。
+# 12 个 provider 的浏览器补充文件仅点击页面已有控件，串行捕获本次请求及重定向链；
+# 目录 HTML / multimedia JSON 发现继续用 context request，HTTP-only 分支保持原策略。
+# 下载/响应/popup 监听提前注册，清理自有 popup 并恢复文章页；点击失败无直链回退。
+# 同一请求期限、取消、预算和原子验收适用，Linux 回放不能替代原生 macOS gate。
 runtime_bundle_built_in = false
 core_install_downloads_runtime = false
 optional_install_download_requires_consent = true
