@@ -256,3 +256,8 @@ CLI 不提供 cache-only `prefer_cache`。`--artifact-mode none` 不会禁止显
 - `batch_resolve`、`batch_check`、`batch_fetch` 每次均最多 50 条。首次批量解析前按原顺序切块；例如 113 条先拆成 `[1..50]`、`[51..100]`、`[101..113]`。每块显式传 `concurrency`。汇总解析结果后跨块 DOI 去重，再把需 probe/fetch 的规范目标按每块最多 50 条提交。原始 index 是宿主保留的映射，不作为工具额外参数；将各阶段块内结果映射到全部原始别名，最终按原 index 排序，不按完成顺序或块内 `1..N` 重新编号。
 - `batch_check(mode="metadata")` 是 likely probe：`likely_yes` 表示有可读信号，`unknown` 表示证据不足。二者都不是已抓取全文。
 - 真实抓取使用 `batch_fetch` 或 `fetch_paper`，并通过 acceptance 才能报告全文完成；已移除 article check。无需落盘的正文检查参数见 [Batch Probe Contract](tool-contract.md#batch-probe-contract)。
+
+
+## 原始文件下载
+
+原始文件请求不属于正文五预设参数矩阵：明确要求原始 PDF 与 SI 时使用独立 MCP `download_paper_pdfs(query, output_dir, include_si=true)`；用户只要主文时 `include_si=false`。阅读/总结继续原预设，不新增 CLI 参数承诺。

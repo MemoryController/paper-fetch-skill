@@ -6,6 +6,9 @@
 
 ## MCP Tools
 
+- `download_paper_pdfs(query, output_dir, include_si=true)` 独立保存原始主文 PDF 与原格式 SI；`output_dir` 必填。不产出正文 Markdown、图片或 fetch cache sidecar。成功文件返回持久 path、size_bytes、sha256、来源与 validation；主文失败为错误，SI 局部失败保留主文，返回 partial/is_error=false 与 degraded acceptance。来源去除签名 query，内部授权 seed 不公开。
+- 原文件 SI 异常保留 `stage=si_discovery|si_download`、安全的 `code/reason/error_category` 及可取得的 `http_status`；发现成功而下载抛错不改称发现失败。`si_discovery.diagnostics.phases` 记录阶段耗时与共享 deadline 前后剩余秒数（未初始化为 null）；取消继续传播。确证共享预算耗尽为 `request_deadline_exceeded`，未知内部异常为 `supplementary_internal_error`，不公开任意异常 details；超时耗时本身不是网络或预算根因证据。
+
 - 所有 tool 成功/失败 JSON payload 顶层使用 `schema_version=2`。新 fetch/cache payload 的完整 trace 只在顶层出现；`quality.trace` 已删除。FetchEnvelope sidecar 当前为 version 5 并要求 acquisition；v4 及更旧 sidecar 明确失效后重新抓取，既有 Markdown 不删除。
 - `resolve_paper(query | title, authors, year)`: 在抓取前规范化 DOI、URL 或标题查询，并尽早暴露歧义。标题输入必须先解析出 DOI 或落地页，再交给 `fetch_paper(...)`。
 - `fetch_paper(...)`: 返回稳定 JSON 载荷；成功响应包含兼容态 `status="ok"`、原值不变的 `source`、可空的 `acquisition={provider,route,representation,transport,fallback_used}`、七分面紧凑 `acceptance`、溯源信息、`token_estimate_breakdown={abstract,body,refs}`，并按需附带 `article`、`markdown`、`metadata`。`acceptance.overall` 才是任务级结论；当 `save_markdown=true` 时，响应会改为紧凑结果，只保留路径、元数据、acceptance 和诊断字段。browser route 在实际启动前自动准备 managed Camoufox。
@@ -15,6 +18,12 @@
 - `browser_preflight(provider=None, test_url=None, timeout_ms=None, browser_user_agent=None, storage_state_path=None, save_storage_state=true, detail="full|compact")`: 对一个或全部 browser provider 运行 live HTML 预检；会访问出版社页面，默认可能更新过滤后的 storage-state，但不运行 PDF fallback、自动认证或 runtime 安装。
 - `batch_resolve(queries, concurrency)` / `batch_check(queries, mode, concurrency)`: 默认 `concurrency=1`，允许范围 `1..8`，每次最多 `50` 个查询；`batch_check` 的 `mode` 默认且仅允许 `"metadata"`，单篇也使用此入口。
 - `batch_fetch(queries, concurrency, ...)`: 对 `1..50` 篇执行真实全文抓取，复用 `fetch_paper` 的 modes/strategy/cache/artifact/Markdown 参数；默认只返回按输入 index 排列的紧凑 manifest/acceptance 记录，不返回多篇完整正文。
+
+## 原格式 SI 当前已知限制
+
+`download_paper_pdfs` 的 SI 路线暂时存在未解决问题，尚不能承诺完整获取。Wiley 的主文阶段可能耗尽共享 120 秒请求预算，导致 SI 在导航前 `request_deadline_exceeded`；该问题尚未修好，主文耗时来源未全部定位。ACS 有主文＋SI 成功样例，但其他附件可能触发 Cloudflare challenge，须遵守合法访问停止规则。
+
+主文成功并不等于 SI 成功：检查 `supplementary[*].status`、`si_discovery` 与 acceptance；`partial/is_error=false` 仍表示任务降级。`not_found` 仅表示发现完成且无附件，`failed/unsupported` 不能当作没有 SI。非 PDF/多附件 SI 与宿主真实取消尚未完成全面 live 验收。仅主文传 `include_si=false`，阅读仍用旧 `fetch_paper`，不要以这些已知限制宣称所有主文或旧阅读路线失效。
 
 ## Browser Preflight Contract
 
@@ -40,7 +49,7 @@
 
 ## 输入与返回契约
 
-- 当前九个工具在 `tools/list` 中的 `output_schema` 都为空，不发布协议级 `outputSchema`。`CallToolResult.structured_content` 继续返回带 `schema_version=2` 的版本化 payload；调用方按工具文档和实际字段消费，不把它误称为 output schema。
+- 当前十个工具在 `tools/list` 中的 `output_schema` 都为空，不发布协议级 `outputSchema`。`CallToolResult.structured_content` 继续返回带 `schema_version=2` 的版本化 payload；调用方按工具文档和实际字段消费，不把它误称为 output schema。
 - 以当前工具公开 schema 为参数事实源：`modes=article|markdown|metadata`、`include_refs=none|top10|all`、`strategy.asset_profile=none|body|all`、`strategy.require_local_body_assets`、`strategy.require_full_size_body_assets`、`artifact_mode=markdown-assets|all|none`、`batch_check` 的 `mode=metadata`，以及 cache `detail=full|compact`。Full-size 自动隐含 local；两项默认关闭且只对 `body|all` 生效。
 - batch `queries` 的公开 schema 和运行时验证都要求 `1..50` 项，`concurrency` 要求 `1..8`；所有公开工具输入对象及嵌套 strategy/budget 对象均拒绝未知字段（`additionalProperties=false`）。
 - 兼容请求仍可使用既有 nested `strategy={...}`，包括 `inline_image_budget`；字符串枚举在 Pydantic validator 中继续做去空白和大小写规范化。规范化不是放宽值域，未知枚举、越界数字、过长数组和额外字段会在已注册工具函数执行前失败。

@@ -388,3 +388,46 @@ __all__ = [
     "scoped_asset_extractor",
     "select_content_nodes",
 ]
+
+
+def extract_original_supplementary_assets(
+    html_text: str, source_url: str
+) -> list[dict[str, str]]:
+    """Only canonical ACS links in the publisher supplementary widget/scope."""
+    import urllib.parse
+
+    soup = BeautifulSoup(html_text, choose_parser())
+    assets = []
+    from .atypon_browser_workflow.asset_scopes import (
+        _atypon_browser_workflow_supplementary_sections,
+    )
+
+    scopes = _atypon_browser_workflow_supplementary_sections(soup)
+    scopes.extend(
+        soup.select(
+            "figshare-widget, .supplementary-material, .article-section__supporting, #supplementary-material, .widget-SupplementaryMaterial, .widget-ArticleDataSupplements"
+        )
+    )
+    for scope in scopes:
+        for anchor in scope.select("a[href]"):
+            url = urllib.parse.urljoin(source_url, str(anchor.get("href") or ""))
+            parsed = urllib.parse.urlsplit(url)
+            if (
+                parsed.hostname != "pubs.acs.org"
+                or "/article-supplement/" not in parsed.path
+            ):
+                continue
+            parts = parsed.path.rstrip("/").split("/")
+            filename = parts[-1]
+            if "." not in filename and len(parts) > 1 and parts[-2] == "pdf":
+                filename += ".pdf"
+            assets.append(
+                {
+                    "url": url,
+                    "kind": "supplementary",
+                    "section": "supplementary",
+                    "filename_hint": filename,
+                    "heading": anchor.get_text(" ", strip=True),
+                }
+            )
+    return assets

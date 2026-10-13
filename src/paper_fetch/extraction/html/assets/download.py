@@ -145,6 +145,7 @@ class AssetResolutionOptions:
 class AssetDownloadOptions:
     """Optional fetch, safety, and execution controls for ``download_assets``."""
 
+    original_files: bool = False
     headers: Mapping[str, str] | None = None
     browser_context_seed: Mapping[str, Any] | None = None
     figure_page_fetcher: FigurePageFetcher | None = None
@@ -1768,6 +1769,7 @@ def save_asset_resolution(
     asset_dir: Path,
     used_names_by_dir: dict[Path, set[str]],
     artifact_store: Any | None = None,
+    original_files: bool = False,
 ) -> dict[str, Any] | _AssetDownloadFailure:
     asset = resolved.asset
     response = resolved.response or {}
@@ -1810,6 +1812,51 @@ def save_asset_resolution(
                 reason="empty_response_body",
             )
         )
+
+    if original_files:
+        from .originals import publish_original_supplement
+
+        try:
+            return publish_original_supplement(
+                asset,
+                response,
+                asset_dir=asset_dir,
+                source_url=source_url,
+                final_url=final_url,
+                reservation=resolved.reservation,
+                artifact_store=artifact_store,
+            )
+        except Exception as exc:
+            _rollback_response_reservation(response)
+            from ....providers._pdf_common import PdfFetchFailure
+
+            code = (
+                "file_conflict"
+                if isinstance(exc, FileExistsError)
+                else ASSET_CANCELLED
+                if isinstance(exc, RequestCancelledError)
+                else exc.kind
+                if isinstance(exc, PdfFetchFailure)
+                else str(exc)
+                if isinstance(exc, ValueError)
+                else "supplementary_publish_failed"
+            )
+            return _AssetDownloadFailure(
+                {
+                    **kind.failure_template(
+                        asset, source_url, final_url=final_url, reason=str(exc)
+                    ),
+                    "id": asset.get("id"),
+                    "role": "supplementary",
+                    "status": "failed",
+                    "code": code,
+                    "discovery_url": asset.get("discovery_url"),
+                    "paper_doi": asset.get("paper_doi"),
+                }
+            )
+        finally:
+            if staging_path is not None:
+                staging_path.unlink(missing_ok=True)
 
     content_type = header_value(response.get("headers"), "content-type")
     output_subdir = kind.output_subdir(asset)
@@ -2337,6 +2384,7 @@ def download_assets(
             asset_dir=asset_dir,
             used_names_by_dir=used_names_by_dir,
             artifact_store=artifact_store,
+            original_files=active_options.original_files,
         ),
         asset_budget=active_budget,
         route_concurrency_cap=route_concurrency_cap,

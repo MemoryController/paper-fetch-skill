@@ -7,6 +7,10 @@ description: "获取并核验指定论文全文，或探测全文可用性。用
 
 先确认论文身份，再按意图获取全文或探测可用性。抓取后验收实际文本或文件；探测只报告可用性证据。搜索工具只负责发现候选，不得用搜索摘要或网页片段冒充论文全文。
 
+用户明确要求原始论文 PDF / SI 文件时，使用 `download_paper_pdfs(query, output_dir=用户目录, include_si=true)`；SI 保留出版社原格式，不转换、不解压。仅下载主文时传 `include_si=false`。阅读/总结仍按既有五个预设调用 `fetch_paper`，下载文件本身不证明已读全文。
+
+**当前原格式 SI 功能暂时有已知问题，不能承诺补充材料齐全。** Wiley 可能在主文阶段耗尽共享预算；ACS 附件可能受 challenge 限制。主文成功而 SI 未完成须报告 partial/degraded，不把发现失败说成没有 SI。仅主文和旧阅读分流不变；见 [`references/tool-contract.md`](references/tool-contract.md#原格式-si-当前已知限制)。
+
 ## 核心契约
 
 - 预设只补全未指定项；沿用用户明确的路径、资产范围、执行面和已有覆盖授权，不重复确认。身份、访问权限和数据完整性约束仍须满足。

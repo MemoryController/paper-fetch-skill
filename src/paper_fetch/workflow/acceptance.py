@@ -1313,3 +1313,51 @@ __all__ = [
     "fetch_acceptance_json_schema",
     "parse_fetch_acceptance_report",
 ]
+
+
+class DownloadAcceptanceReport(BaseModel):
+    """Pure acceptance projection of validated, published original files."""
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: int = 2
+    overall: OverallAcceptanceStatus
+    main_pdf: Literal["ok", "failed"]
+    supplementary: Literal["complete", "degraded", "not_requested"]
+
+
+def evaluate_download_acceptance(
+    main_pdf: Mapping[str, Any],
+    supplementary: Sequence[Mapping[str, Any]],
+    *,
+    discovery_status: str,
+) -> DownloadAcceptanceReport:
+    main_ok = (
+        main_pdf.get("status") == "downloaded"
+        and all(main_pdf.get(key) for key in ("path", "sha256", "size_bytes"))
+        and all(
+            main_pdf.get("validation", {}).get(key) is True
+            for key in ("format", "structure", "size", "role", "identity")
+        )
+    )
+    si_ok = discovery_status in {"not_requested", "not_found", "ok"} and all(
+        item.get("status") == "downloaded" for item in supplementary
+    )
+    return DownloadAcceptanceReport(
+        overall=(
+            (
+                OverallAcceptanceStatus.ACTION_REQUIRED
+                if main_pdf.get("code") in {"no_access", "ambiguous", "not_configured"}
+                else OverallAcceptanceStatus.FAILED
+            )
+            if not main_ok
+            else OverallAcceptanceStatus.COMPLETE
+            if si_ok
+            else OverallAcceptanceStatus.DEGRADED
+        ),
+        main_pdf="ok" if main_ok else "failed",
+        supplementary="not_requested"
+        if discovery_status == "not_requested"
+        else "complete"
+        if si_ok
+        else "degraded",
+    )

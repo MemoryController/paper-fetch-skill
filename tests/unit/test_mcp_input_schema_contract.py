@@ -29,6 +29,7 @@ def test_public_tool_schemas_are_valid_and_forbid_unknown_fields() -> None:
         "batch_resolve",
         "browser_preflight",
         "fetch_paper",
+        "download_paper_pdfs",
         "get_cached",
         "list_cached",
         "provider_status",
@@ -336,3 +337,14 @@ def test_representative_invalid_tool_inputs_are_rejected(
 ) -> None:
     with pytest.raises(ValidationError):
         request_type.model_validate(arguments)
+
+
+def test_download_schema_requires_output_dir_without_changing_fetch_schema():
+    tools = asyncio.run(build_server().list_tools())
+    schemas = {tool.name: tool.input_schema for tool in tools}
+    schema = schemas["download_paper_pdfs"]
+    assert set(schema["required"]) == {"query", "output_dir"}
+    assert schema["properties"]["include_si"]["default"] is True
+    assert set(schema["properties"]) == {"query", "output_dir", "include_si"}
+    assert "output_dir" not in schemas["fetch_paper"]["properties"]
+    assert schemas["fetch_paper"]["properties"]["prefer_cache"]["default"] is False

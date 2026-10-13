@@ -100,3 +100,8 @@
 - 按 [`acceptance.md`](acceptance.md#最终报告) 区分普通阅读、归档、探测和失败报告；保留身份、来源、适用的 acceptance 结论或探测证据及影响任务的降级，技术细节按需展示。
 - 批量结果保留原始条目映射、去重结果及逐项状态；真实抓取汇总 complete、degraded、limited、failed、action_required、取消与未调度项，仅探测按 probe_state、错误和调度状态汇总。不得把 fetch 完成当作最终成功。
 - 获取和验收完成后，宿主用已核验的文本继续用户要求的总结、比较、翻译或提取；若材料不足，说明具体限制并完成证据支持的部分。paper-fetch 的职责仍限于身份解析、获取、验收和报告。
+
+
+## 原始文件下载
+
+原始文件下载分流：用户明确要求原始 PDF / SI 时调用 `download_paper_pdfs(query, output_dir=用户目录, include_si=true)`；仍先确认身份和合法访问边界。主文失败不启动 SI；逐项失败或 discovery failed/unsupported 必须报告为 partial，不能说没有 SI。阅读/总结不改为该工具。

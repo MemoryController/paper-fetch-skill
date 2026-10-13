@@ -121,3 +121,27 @@ def test_acs_silverchair_formula_fixture_preserves_mathml_and_tables() -> None:
     assert "## 3. Conclusions" in markdown
     assert len(extraction["references"]) == 20
     assert extraction["references"][0]["year"] == "2015"
+
+
+def test_original_acs_si_discovery_uses_trusted_canonical_scope_without_viewer():
+    from paper_fetch.providers.acs import AcsClient
+    from paper_fetch.providers.browser_workflow.originals import (
+        bind_supplementary_assets,
+        validate_discovery_identity,
+    )
+
+    html = golden_criteria_asset(ACS_SAMPLE_DOI, "original.html").read_text(
+        encoding="utf-8"
+    )
+    identity = validate_discovery_identity(html, ACS_SAMPLE_DOI, {}, ACS_SAMPLE_LANDING)
+    assert identity["status"] == "match"
+    assets = bind_supplementary_assets(
+        AcsClient(None, {})._original_supplementary_assets(html, ACS_SAMPLE_LANDING),
+        ACS_SAMPLE_DOI,
+        ACS_SAMPLE_LANDING,
+    )
+    assert [item["url"] for item in assets] == [
+        "https://pubs.acs.org/acsodf/article-supplement/358560/pdf/ao4c03987_si_001/"
+    ]
+    assert assets[0]["filename_hint"] == "ao4c03987_si_001.pdf"
+    assert assets[0]["paper_doi"] == ACS_SAMPLE_DOI

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..quality.access_boundary import propagate_paywall
 
 import urllib.parse
@@ -165,6 +167,7 @@ def _fetch_wiley_tdm_pdf_result(
     expected_identity: Mapping[str, Any] | None = None,
     timeout: int = DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
     context: RuntimeContext | None = None,
+    raw_only: bool = False,
 ) -> PdfFetchResult:
     del timeout
     maximum_pdf_bytes = pdf_max_bytes()
@@ -223,6 +226,7 @@ def _fetch_wiley_tdm_pdf_result(
             expected_identity=expected_identity,
             context=context,
             fetcher=fetch_pdf_over_http,
+            raw_only=raw_only,
         ).fetch([redirected_url])
 
     return pdf_fetch_result_from_response(
@@ -234,6 +238,7 @@ def _fetch_wiley_tdm_pdf_result(
         final_url=final_url,
         not_pdf_message="Wiley API PDF fallback did not return a PDF file.",
         allow_pdf_only=True,
+        raw_only=raw_only,
         expected_identity=expected_identity,
     )
 
@@ -252,6 +257,31 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
         self.tdm_client_token = str(
             self.env.get(WILEY_TDM_CLIENT_TOKEN_ENV_VAR, "")
         ).strip()
+
+    def download_primary_pdf(self, doi, metadata, *, context=None):
+        if self.tdm_client_token:
+            result = _fetch_wiley_tdm_pdf_result(
+                self.transport,
+                api_url=self._tdm_api_url(doi),
+                headers=self._tdm_api_headers(),
+                expected_identity={**dict(metadata), "doi": doi},
+                context=context,
+                raw_only=True,
+            )
+            return replace(
+                result, diagnostics={**result.diagnostics, "route": "tdm_pdf"}
+            )
+        return super().download_primary_pdf(doi, metadata, context=context)
+
+    def _original_supplementary_assets(self, html, source_url):
+        from bs4 import BeautifulSoup
+        from . import _wiley_html
+
+        soup = BeautifulSoup(html, "lxml")
+        scopes = _wiley_html.find_supporting_information_sections(soup)
+        return _wiley_html.extract_supplementary_assets(
+            "\n".join(str(scope) for scope in scopes), source_url
+        )
 
     def _tdm_api_url(self, doi: str) -> str:
         template = provider_api_url_template(self.name, WILEY_TDM_API_TEMPLATE_NAME)

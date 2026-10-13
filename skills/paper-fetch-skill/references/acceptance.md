@@ -90,3 +90,8 @@ PY
 展示精简不改变工具、manifest 或 cache 的完整结果，也不省略必要的身份、文件和降级验收。需重试时只按 [`failure-handling.md`](failure-handling.md) 的上限和状态变化条件执行。
 
 获取验收后，宿主继续完成用户原本要求的总结、比较、翻译或提取；不要以获取报告结束阅读任务。证据不足时说明限制并完成有依据的部分，不把摘要或片段冒充全文。paper-fetch 本身仍只负责身份解析、全文获取、验收与报告。
+
+
+## 原始文件下载
+
+原始文件下载验收：核对 main_pdf/supplementary 的逐文件 status、持久 path、size_bytes、sha256、validation 和来源。主文成功但 SI 失败为 partial、acceptance.overall=degraded；not_requested、not_found、unsupported、failed 必须分别报告。文件事实不等于正文阅读或 fetch cache 可复用。

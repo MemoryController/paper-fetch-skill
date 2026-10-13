@@ -109,6 +109,15 @@ Cookie、Authorization、storage-state 或原始失败 HTML。
 
 ## 二进制资产与资源预算
 
+- 原始文件下载能力主动走现有 PDF 路线，显式 `raw_only` 只做结构、大小、角色与身份
+  校验，不调用正文转换器；旧 PDF fallback 与 `allow_pdf_only` 默认语义不变。
+  ACS 仅发现可信补充材料 scope 内 canonical 链接；Wiley SI 复用同会话 supporting panel
+  展开/点击与重定向 response/download 捕获，而非图片 fetcher。内部 browser seed 不公开。
+  原文件主文阶段已接受的 seed 仅在同一 RuntimeContext、同一 client/授权作用域、同一 DOI
+  内传给 SI 发现，不持久化、不跨请求复用；不重置共享 deadline，旧正文 waterfall 不变。
+  临时 download 清理前取得受限原字节，SI 校验格式后按共享预算原子发布，默认禁止覆盖
+  不同字节；ZIP/Office 只检查容器索引，不解压、不转换，最终路径与 SHA-256 可审计。
+  受控 Linux 协议测试不代表 live 授权成功，也不替代原生 macOS gate。
 - Springer/Nature 先下载并验收已知原图，失败或无原图候选时才解析图页，最后考虑
   预览降级。两个阶段在同一次资产解析中复用预算、失败来源和落盘；表格页面补齐保留。
 - IEEE 浏览器恢复复用已就绪的文章页，按原图 URL 匹配文章入口并提前监听响应。

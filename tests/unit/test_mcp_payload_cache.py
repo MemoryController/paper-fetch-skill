@@ -241,6 +241,12 @@ class McpPayloadCacheTests(unittest.TestCase):
                 "idempotent_hint": False,
                 "open_world_hint": True,
             },
+            "download_paper_pdfs": {
+                "read_only_hint": False,
+                "destructive_hint": False,
+                "idempotent_hint": False,
+                "open_world_hint": True,
+            },
             "batch_fetch": {
                 "read_only_hint": False,
                 "destructive_hint": False,

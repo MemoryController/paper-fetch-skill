@@ -30,6 +30,7 @@ __all__ = [
     "ResolvedQuery",
     "RuntimeContext",
     "build_clients",
+    "download_paper_pdfs",
     "fetch_metadata_for_resolved_query",
     "fetch_paper",
     "merge_primary_secondary_metadata",
@@ -64,6 +65,27 @@ def probe_has_fulltext(
             query,
             context=runtime,
             resolve_paper_fn=resolve_paper,
+        )
+    finally:
+        if owns_runtime:
+            runtime.close()
+
+
+def download_paper_pdfs(
+    query: str,
+    *,
+    output_dir: str,
+    include_si: bool = True,
+    context: RuntimeContext | None = None,
+) -> dict:
+    """Download the original paper PDF and, optionally, publisher-format SI."""
+    from .workflow.downloads import download_paper_pdfs as workflow_download_paper_pdfs
+
+    owns_runtime = context is None
+    runtime = context or RuntimeContext()
+    try:
+        return workflow_download_paper_pdfs(
+            query, output_dir=output_dir, include_si=include_si, context=runtime
         )
     finally:
         if owns_runtime:

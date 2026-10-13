@@ -294,3 +294,33 @@ def test_wiley_confirmed_403_extraction_failure_continues_next_candidate(
     ]
     assert attempts[0]["candidate_continuation"] is True
     pdf_fetch.assert_not_called()
+
+
+def test_original_wiley_si_discovery_and_recorded_challenge_bytes_are_not_success():
+    import hashlib
+    import pytest
+    from paper_fetch.extraction.html.assets.originals import (
+        validate_supplementary_payload,
+    )
+    from paper_fetch.providers.browser_workflow.originals import (
+        validate_discovery_identity,
+    )
+    from tests.support.acquired_publisher_inputs import _record
+
+    doi = "10.1111/gcb.16414"
+    source = "https://onlinelibrary.wiley.com/doi/full/" + doi
+    html = golden_criteria_asset(doi, "original.html").read_text(encoding="utf-8")
+    assert validate_discovery_identity(html, doi, {}, source)["status"] == "match"
+    assets = wiley_provider.WileyClient(None, {})._original_supplementary_assets(
+        html, source
+    )
+    assert len(assets) == 1
+    assert assets[0]["filename_hint"] == "gcb16414-sup-0001-FigureS1.docx"
+    record, payload = _record(
+        doi, "acquisition/assets-2026-09-15/7fd7ed83de119c61-http-1.bin"
+    )
+    assert record["requested_url"] == assets[0]["url"]
+    assert record["status_code"] == 403
+    assert hashlib.sha256(payload).hexdigest() == record["sha256"]
+    with pytest.raises(ValueError, match="html_error"):
+        validate_supplementary_payload(payload, assets[0]["filename_hint"])

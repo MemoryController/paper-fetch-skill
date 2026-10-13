@@ -4278,6 +4278,34 @@
         "scope": "Wiley live article assets",
         "reason": "三个既有样本的 headed/headless 串行复测，检查全文 acceptance、全部公式/正文图计数、MIME/尺寸/SHA-256、会话复用及挑战恢复；不替代 committed golden 原文证据。"
       }
+    },
+    "tests/integration/test_original_downloads_provider.py": {
+      "default": {
+        "kind": "mechanism",
+        "scope": "actual PDF backend and controlled browser original-file publication",
+        "reason": "真实 PyMuPDF 与受控浏览器协议检查原字节、hash、文件持久化、冲突、取消和 SI 同会话点击；不声称 live 出版社授权成功。"
+      }
+    },
+    "tests/unit/test_original_downloads_provider.py": {
+      "default": {
+        "kind": "mechanism",
+        "scope": "original provider PDF validation, request/client/DOI seed handoff and scoped SI contract",
+        "reason": "最小片段和边界 mock 验证无转换入口、身份/角色拒绝、授权 API 与 SI 来源；不证明完整出版社内容。"
+      }
+    },
+    "tests/unit/test_download_paper_pdfs.py": {
+      "default": {
+        "kind": "mechanism",
+        "scope": "original download validation, SI phase error/network/deadline evidence and terminal result contracts",
+        "reason": "Controlled provider boundary facts test orchestration and publication, not live publisher authorization or PDF validation backend."
+      }
+    },
+    "tests/integration/test_download_paper_pdfs.py": {
+      "default": {
+        "kind": "mechanism",
+        "scope": "service/MCP local persistence, cancellation and hash contracts with controlled provider boundaries",
+        "reason": "Controlled provider boundary facts test orchestration and publication, not live publisher authorization or PDF validation backend."
+      }
     }
   }
 }

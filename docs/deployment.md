@@ -364,11 +364,19 @@ paper-fetch-install-formula-tools
 
 ### 当前仓库里的 repo-local 开发
 
-如果你只是在当前仓库里开发：
+如果你只是在当前仓库里开发，明确复用项目解释器：
 
 ```bash
-./install-formula-tools.sh
+uv sync --frozen --extra dev --extra full
+PAPER_FETCH_INSTALL_PYTHON_BIN="$PWD/.venv/bin/python" ./install-formula-tools.sh
 ```
+
+脚本默认使用系统 `python3`；`uv` 的 `.venv` 有依赖不代表系统解释器也有。
+`rapidfuzz` 等已声明依赖缺失时，应选对解释器，不要逐个新增项目依赖。
+安装器可能成功回退到 Node/Python，退出 0 不证明 texmath 已安装；须确认
+`.formula-tools/bin/texmath --version` 为 `Version 0.13.3` 并执行真实转换。
+Arch Linux 的仅动态库 GHC 构建配置与验收命令见
+[手动验收清单第 6 节](manual-original-download-test.md)。
 
 补充说明：
 

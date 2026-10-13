@@ -85,6 +85,7 @@ class PdfFallbackStrategy:
     asset_output_dir: Path | None = None
     seed_urls: list[str] | None = None
     browser_cookies: list[dict[str, Any]] | None = None
+    raw_only: bool = False
     allow_pdf_only: bool = True
     expected_identity: Mapping[str, Any] | None = None
     context: RuntimeContext | None = None
@@ -103,6 +104,7 @@ class PdfFallbackStrategy:
                 seed_urls=self.seed_urls,
                 browser_cookies=self.browser_cookies,
                 allow_pdf_only=self.allow_pdf_only,
+                raw_only=self.raw_only,
                 timeout=self.timeout,
                 expected_identity=self.expected_identity,
                 context=self.context,
@@ -135,6 +137,7 @@ class PdfFallbackStrategy:
             seed_urls=self.seed_urls,
             browser_cookies=self.browser_cookies,
             allow_pdf_only=self.allow_pdf_only,
+            raw_only=self.raw_only,
             request=PdfRequestContext(
                 timeout_seconds=effective_timeout,
                 expected_identity=self.expected_identity,
@@ -594,6 +597,7 @@ def _response_to_pdf_result(
     asset_profile: PdfAssetProfile = "none",
     asset_output_dir: Path | None = None,
     allow_pdf_only: bool = False,
+    raw_only: bool = False,
     source_url: str,
     final_url: str,
     page: Any | None = None,
@@ -655,6 +659,7 @@ def _response_to_pdf_result(
             pdf_bytes=response_body,
             suggested_filename=filename_from_headers(response_headers),
             allow_pdf_only=allow_pdf_only,
+            raw_only=raw_only,
             expected_identity=request.expected_identity,
         )
     except PdfFallbackFailure as exc:
@@ -667,6 +672,7 @@ def _response_to_pdf_result(
             asset_profile=asset_profile,
             asset_output_dir=asset_output_dir,
             allow_pdf_only=allow_pdf_only,
+            raw_only=raw_only,
             source_url=source_url,
             final_url=final_url,
             request=request,
@@ -683,6 +689,7 @@ def _refetch_pdf_with_browser_request(
     asset_profile: PdfAssetProfile = "none",
     asset_output_dir: Path | None = None,
     allow_pdf_only: bool = False,
+    raw_only: bool = False,
     source_url: str,
     final_url: str,
     request: PdfRequestContext = PdfRequestContext(),
@@ -764,6 +771,7 @@ def _refetch_pdf_with_browser_request(
         pdf_bytes=body,
         suggested_filename=filename_from_headers(headers),
         allow_pdf_only=allow_pdf_only,
+        raw_only=raw_only,
         expected_identity=request.expected_identity,
     )
 
@@ -775,6 +783,7 @@ def _download_to_pdf_result(
     asset_profile: PdfAssetProfile = "none",
     asset_output_dir: Path | None = None,
     allow_pdf_only: bool = False,
+    raw_only: bool = False,
     source_url: str,
     final_url: str,
     expected_identity: Mapping[str, Any] | None = None,
@@ -807,6 +816,7 @@ def _download_to_pdf_result(
             pdf_bytes=download_path.read_bytes(),
             suggested_filename=getattr(download, "suggested_filename", None),
             allow_pdf_only=allow_pdf_only,
+            raw_only=raw_only,
             expected_identity=expected_identity,
         )
     finally:
@@ -859,6 +869,7 @@ def fetch_pdf_with_browser(
     referer: str | None = None,
     seed_urls: list[str] | None = None,
     allow_pdf_only: bool = False,
+    raw_only: bool = False,
     request: PdfRequestContext = PdfRequestContext(),
 ) -> PdfFallbackResult:
     context = request.runtime
@@ -909,6 +920,7 @@ def fetch_pdf_with_browser(
                 asset_profile=asset_profile,
                 asset_output_dir=asset_output_dir,
                 allow_pdf_only=allow_pdf_only,
+                raw_only=raw_only,
                 seed_urls=normalized_seed_urls,
                 browser_cookies=list(browser_cookies or []),
                 request=replace(
@@ -1006,6 +1018,7 @@ def fetch_pdf_with_browser(
                                 asset_profile=asset_profile,
                                 asset_output_dir=asset_output_dir,
                                 allow_pdf_only=allow_pdf_only,
+                                raw_only=raw_only,
                                 source_url=iframe_response.url,
                                 final_url=iframe_response.url,
                                 request=active_request,
@@ -1064,6 +1077,7 @@ def fetch_pdf_with_browser(
                             asset_profile=asset_profile,
                             asset_output_dir=asset_output_dir,
                             allow_pdf_only=allow_pdf_only,
+                            raw_only=raw_only,
                             source_url=url,
                             final_url=page.url,
                             page=page,
@@ -1136,6 +1150,7 @@ def fetch_pdf_with_browser(
                             asset_profile=asset_profile,
                             asset_output_dir=asset_output_dir,
                             allow_pdf_only=allow_pdf_only,
+                            raw_only=raw_only,
                             browser_cookies=context_cookies,
                             request=replace(
                                 active_request,
@@ -1218,6 +1233,7 @@ def fetch_pdf_with_browser(
                     asset_profile=asset_profile,
                     asset_output_dir=asset_output_dir,
                     allow_pdf_only=allow_pdf_only,
+                    raw_only=raw_only,
                     source_url=download.url if ieee_navigation else url,
                     final_url=download.url if ieee_navigation else page.url,
                     expected_identity=request.expected_identity,
@@ -1323,6 +1339,7 @@ def fetch_pdf_over_http(
     asset_profile: PdfAssetProfile = "none",
     asset_output_dir: Path | None = None,
     allow_pdf_only: bool = False,
+    raw_only: bool = False,
     seed_urls: list[str] | None = None,
     browser_cookies: list[dict[str, Any]] | None = None,
     request: PdfRequestContext = PdfRequestContext(),
@@ -1518,6 +1535,7 @@ def fetch_pdf_over_http(
                 pdf_bytes=bytes(pdf_bytes),
                 suggested_filename=filename_from_headers(response_headers),
                 allow_pdf_only=allow_pdf_only,
+                raw_only=raw_only,
                 expected_identity=request.expected_identity,
             )
             return replace(

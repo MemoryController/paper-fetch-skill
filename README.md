@@ -14,6 +14,27 @@ Sections · formulas · tables · references · local assets
 Markdown · structured article · quality diagnostics
 ```
 
+原始文件下载使用独立 Python / MCP 接口（不生成正文 Markdown）：
+
+```python
+from paper_fetch.service import download_paper_pdfs
+
+result = download_paper_pdfs("10.1021/example", output_dir="./papers", include_si=True)
+```
+
+MCP 同名工具要求 `output_dir`，`include_si` 默认 `true`。主文保存经核验的原始 PDF；已发现 SI 保留出版社原格式，不转换、不解压。结果提供持久路径、大小、SHA-256 与逐文件失败；SI 受阻时主文成功保留，返回 `partial`。文件按论文身份隔离，相同字节幂等，不覆盖不同字节；不写全文 cache sidecar。尚无安全原文件路线的 provider 明确报告不支持。阅读/总结继续使用 `fetch_paper`；没有新增 CLI 子命令。
+
+### 当前已知缺陷：原格式 SI 下载暂时不稳定
+
+**`download_paper_pdfs` 的 SI 功能目前仍有问题，尚未完成全部验收；主文下载成功不代表补充材料已完整保存。**
+
+- **Wiley**：部分请求中，主文阶段可能耗尽共享的 120 秒请求预算，SI 尚未导航就返回 `request_deadline_exceeded`。该问题尚未修好；主文慢在哪个 warm/HTTP/browser 分支仍待定位，不能一概归为附件网络故障。
+- **ACS**：已有合法可访问样例通过主文＋SI 下载，但部分附件仍可能触发 Cloudflare challenge。遇到访问限制会停止，不保证所有论文的 SI 都可取得，不绕过认证或验证码。
+- 主文成功、SI 发现/下载失败时返回 `partial`、`acceptance.overall=degraded`；`failed/unsupported` 不等于“没有 SI”。请核对逐文件状态、实际路径和 hash，不只看 `is_error=false`。
+- 非 PDF/多附件 SI、宿主真实取消尚未完成全面 live 验收。机制测试通过不等于这些使用场景都已验证。
+
+只需要主文时可传 `include_si=False`。阅读/总结仍使用原有 `fetch_paper`；上述限制针对新的原文件 SI 路线，不表示旧阅读接口被替换或全部失效。详见[手动验收与已知限制](docs/manual-original-download-test.md#当前已知缺陷与使用限制)。当前提交代码不等于功能全量通过或正式发布。
+
 ## 为什么不只是 PDF → Markdown
 
 Paper Fetch 不替代通用 PDF 转换器，而是在它们之外增加论文身份解析、provider 路由、官方结构化全文和统一质量诊断。具体 PDF 工具的能力各不相同；下表比较的是两种设计重点，而不是对所有 PDF 转换器作统一评价。

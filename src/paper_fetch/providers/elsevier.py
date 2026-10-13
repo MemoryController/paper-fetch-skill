@@ -69,6 +69,7 @@ from ._elsevier_objects import (
 )
 from ._pdf_common import (
     PdfFetchFailure,
+    PdfFetchResult,
     pdf_asset_output_dir,
     pdf_asset_profile_from_context,
     pdf_fetch_result_assets,
@@ -689,6 +690,91 @@ class ElsevierClient(ProviderClient):
         self.api_key = env.get("ELSEVIER_API_KEY", "").strip()
         self.user_agent = build_user_agent(env)
 
+    def download_primary_pdf(self, doi, metadata, *, context=None):
+        if context is not None:
+            context.raise_if_cancelled()
+        return self._fetch_official_pdf_result(
+            doi,
+            context=context,
+            raw_only=True,
+            expected_identity={**dict(metadata), "doi": doi},
+        )
+
+    def discover_supplementary_files(self, doi, metadata, *, context=None):
+        from .browser_workflow.originals import bind_supplementary_assets
+        from ..publisher_identity import validate_extracted_identity
+
+        if context is not None:
+            context.raise_if_cancelled()
+        payload = self._fetch_official_xml_payload(doi)
+        content = payload.content
+        identity = validate_extracted_identity(
+            {**dict(metadata), "doi": doi},
+            {},
+            extract_elsevier_xml_identity(content.body),
+        )
+        if identity.status != "match":
+            raise ProviderFailure(
+                NO_RESULT, "Supplementary XML identity is not verified."
+            )
+        references = extract_elsevier_asset_references(
+            content.body, context=context, source_url=content.source_url
+        )
+        assets = [
+            {**ref, "url": ref["source_url"]}
+            for ref in references
+            if ref.get("asset_type") == "supplementary"
+        ]
+        return {
+            "status": "ok",
+            "assets": bind_supplementary_assets(assets, doi, content.source_url),
+            "source_url": content.source_url,
+            "browser_context_seed": None,
+            "diagnostics": {"identity": identity.to_dict()},
+        }
+
+    def download_supplementary_files(
+        self, doi, metadata, discovery, output_dir, *, context=None
+    ):
+        from ..extraction.html.assets import (
+            AssetDownloadOptions,
+            SUPPLEMENTARY_KIND,
+            download_assets,
+        )
+
+        from .browser_workflow.originals import supplementary_download_report
+
+        context = self._runtime_context(context, output_dir=output_dir)
+        context.raise_if_cancelled()
+        assets = list(discovery.get("assets") or [])
+        if any(
+            asset.get("paper_doi") != doi
+            or asset.get("discovery_url") != discovery.get("source_url")
+            for asset in assets
+        ):
+            raise ValueError("supplementary_source_binding_mismatch")
+        result = download_assets(
+            SUPPLEMENTARY_KIND,
+            self.transport,
+            article_id=doi,
+            assets=assets,
+            output_dir=output_dir,
+            user_agent=self.user_agent,
+            asset_profile="all",
+            options=AssetDownloadOptions(
+                original_files=True,
+                headers=self._base_headers("*/*"),
+                fetch_policy="direct_then_browser",
+                asset_budget=context.asset_budget,
+                artifact_store=context.artifact_store,
+                runtime_context=context,
+                provider_name=self.name,
+            ),
+        )
+        return supplementary_download_report(
+            result, assets, self.name, route="object_assets"
+        )
+
     def _base_headers(self, accept: str) -> dict[str, str]:
         if not self.api_key:
             raise ProviderFailure(
@@ -811,13 +897,15 @@ class ElsevierClient(ProviderClient):
             trace_route="xml_pii",
         )
 
-    def _fetch_official_pdf_payload(
+    def _fetch_official_pdf_result(
         self,
         doi: str,
         *,
         asset_profile: AssetProfile = "none",
         context: RuntimeContext | None = None,
-    ) -> RawFulltextPayload:
+        raw_only: bool = False,
+        expected_identity: Mapping[str, Any] | None = None,
+    ) -> PdfFetchResult:
         url = self._official_article_url(doi)
         effective_asset_profile = asset_profile or pdf_asset_profile_from_context(
             context
@@ -880,9 +968,12 @@ class ElsevierClient(ProviderClient):
                 final_url=final_url,
                 not_pdf_message="Elsevier official PDF fallback did not return a PDF file.",
                 allow_pdf_only=True,
-                expected_identity={"doi": doi},
+                raw_only=raw_only,
+                expected_identity=expected_identity or {"doi": doi},
             )
         except PdfFetchFailure as exc:
+            if raw_only and exc.kind == "missing_pymupdf":
+                raise ProviderFailure(NOT_CONFIGURED, str(exc)) from exc
             propagate_paywall(exc)
             message = (
                 str(exc)
@@ -891,6 +982,24 @@ class ElsevierClient(ProviderClient):
             )
             raise ProviderFailure(NO_RESULT, message) from exc
 
+        return (
+            replace(
+                pdf_result, diagnostics={**pdf_result.diagnostics, "route": "pdf_api"}
+            )
+            if raw_only
+            else pdf_result
+        )
+
+    def _fetch_official_pdf_payload(
+        self,
+        doi: str,
+        *,
+        asset_profile: AssetProfile = "none",
+        context: RuntimeContext | None = None,
+    ) -> RawFulltextPayload:
+        pdf_result = self._fetch_official_pdf_result(
+            doi, asset_profile=asset_profile, context=context
+        )
         return build_provider_payload(
             provider="elsevier",
             route_kind=PDF_FALLBACK,

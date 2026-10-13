@@ -600,6 +600,19 @@ class FetchPaperToolRequest(FetchPaperRequest):
         return _normalize_optional_string(value)
 
 
+class DownloadPaperPdfsRequest(_RequiredQueryRequest):
+    output_dir: str
+    include_si: bool = True
+
+    @field_validator("output_dir")
+    @classmethod
+    def validate_output_dir(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("output_dir is required")
+        return value
+
+
 class BatchResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -792,6 +805,7 @@ class BrowserPreflightRequest(BaseModel):
 MCP_TOOL_REQUEST_MODELS: dict[str, type[BaseModel]] = {
     "resolve_paper": ResolvePaperRequest,
     "fetch_paper": FetchPaperToolRequest,
+    "download_paper_pdfs": DownloadPaperPdfsRequest,
     "list_cached": ListCachedRequest,
     "get_cached": GetCachedRequest,
     "batch_resolve": BatchResolveRequest,

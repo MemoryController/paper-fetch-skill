@@ -131,6 +131,9 @@ class AcsClient(browser_workflow.BrowserWorkflowClient):
     name = ACS_BROWSER_PROFILE.name
     profile = ACS_BROWSER_PROFILE
 
+    def _original_supplementary_assets(self, html, source_url):
+        return _acs_html.extract_original_supplementary_assets(html, source_url)
+
 
 PROVIDER_BUNDLE = ProviderBundle(
     client_factory=AcsClient,

@@ -14,6 +14,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ToolAnnotations
 
 from ..version import __version__
+from .download_tool import download_paper_pdfs_tool_async
 from ._deps import default_mcp_deps
 from ._instructions import fetch_tool_description, server_instructions
 from .batch import batch_check_tool_async, batch_resolve_tool_async
@@ -235,6 +236,26 @@ def build_server() -> PaperFetchMCPServer:
             ctx=ctx,
             deps=deps,
             **tool_kwargs,
+        )
+
+    @server.tool(
+        name="download_paper_pdfs",
+        description="Save the original main PDF and optional publisher-format supplementary files without conversion. output_dir is required.",
+        annotations=_fetch_annotations(),
+        structured_output=False,
+    )
+    async def download_paper_pdfs(
+        query: str,
+        output_dir: str,
+        include_si: bool = True,
+        ctx: Context | None = None,
+    ) -> CallToolResult:
+        return await download_paper_pdfs_tool_async(
+            query=query,
+            output_dir=output_dir,
+            include_si=include_si,
+            ctx=ctx,
+            deps=deps,
         )
 
     @server.tool(

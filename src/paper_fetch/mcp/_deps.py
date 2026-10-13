@@ -9,6 +9,7 @@ from collections.abc import Callable
 from ..config import build_runtime_env, resolve_mcp_download_dir
 from ..browser_preflight import run_browser_provider_preflight
 from ..providers.registry import build_clients
+from ..service import download_paper_pdfs as service_download_paper_pdfs
 from ..service import fetch_paper as service_fetch_paper
 from ..service import probe_has_fulltext as service_probe_has_fulltext
 from ..service import resolve_paper as service_resolve_paper
@@ -33,6 +34,7 @@ class MCPDeps:
     preferred_cached_entries: Callable[..., Any]
     register_markdown_entry: Callable[..., Any]
     run_browser_provider_preflight: Callable[..., Any]
+    service_download_paper_pdfs: Callable[..., Any] = service_download_paper_pdfs
 
 
 def _fetch_paper_envelope(*args: Any, **kwargs: Any) -> Any:

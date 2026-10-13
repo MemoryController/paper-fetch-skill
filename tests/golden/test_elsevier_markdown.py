@@ -794,3 +794,71 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_original_elsevier_si_replay_preserves_publisher_pdf_bytes_and_hash(tmp_path):
+    import hashlib
+    from unittest.mock import Mock
+    from paper_fetch.runtime import RuntimeContext
+    from paper_fetch.providers.browser_workflow.originals import (
+        bind_supplementary_assets,
+    )
+    from tests.support.acquired_publisher_inputs import _record
+
+    doi = "10.1016/j.agrformet.2024.109975"
+    xml = golden_criteria_asset(doi, "original.xml").read_bytes()
+    source = "https://api.elsevier.com/content/article/doi/" + doi
+    references = elsevier_provider.extract_elsevier_asset_references(
+        xml, source_url=source
+    )
+    record, payload = _record(
+        doi, "acquisition/assets-2026-09-15/f8036c1f08c82f0c-http-1.bin"
+    )
+    references = [
+        item for item in references if item["source_url"] == record["requested_url"]
+    ]
+    assert references and references[0]["asset_type"] == "supplementary"
+    assets = bind_supplementary_assets(references, doi, source)
+    transport = Mock()
+
+    def stream(method, url, path, *, headers, options):
+        assert url == record["requested_url"]
+        assert "X-ELS-APIKey" in headers
+        options.on_content_length(len(payload))
+        options.on_chunk(len(payload))
+        Path(path).write_bytes(payload)
+        return {
+            "status_code": 200,
+            "headers": record["response_headers"],
+            "url": record["final_url"],
+            "staging_path": str(path),
+            "downloaded_bytes": len(payload),
+            "body_preview": payload[:8192],
+        }
+
+    transport.stream_to_file.side_effect = stream
+    transport._streaming_ready = True
+    client = elsevier_provider.ElsevierClient(
+        transport, {"ELSEVIER_API_KEY": "authorized-test-key"}
+    )
+    context = RuntimeContext(env={}, transport=transport, download_dir=tmp_path)
+    result = client.download_supplementary_files(
+        doi,
+        {},
+        {"status": "ok", "assets": assets, "source_url": source},
+        tmp_path,
+        context=context,
+    )
+    assert not result["asset_failures"]
+    item = result["assets"][0]
+    assert Path(item["path"]).read_bytes() == payload
+    assert item["sha256"] == record["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert item["paper_doi"] == doi
+    assert item["route"] == "object_assets"
+    assert item["content_type"].startswith("application/pdf")
+    assert item["validation"] == {
+        "format": True,
+        "size": True,
+        "source": True,
+        "structure": True,
+    }

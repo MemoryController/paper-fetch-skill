@@ -797,6 +797,7 @@ def pdf_fetch_result_from_response(
     asset_profile: PdfAssetProfile = "none",
     asset_output_dir: Path | None = None,
     allow_pdf_only: bool = False,
+    raw_only: bool = False,
     source_url: str,
     not_pdf_message: str,
     final_url: str | None = None,
@@ -843,6 +844,7 @@ def pdf_fetch_result_from_response(
         pdf_bytes=pdf_bytes,
         suggested_filename=filename_from_headers(response_headers),
         allow_pdf_only=allow_pdf_only,
+        raw_only=raw_only,
         expected_identity=expected_identity,
     )
 
@@ -875,24 +877,30 @@ def _stable_pdf_filename(
     return f"{stem or 'downloaded'}-{digest}.pdf"
 
 
-def pdf_fetch_result_from_bytes(
-    *,
-    artifact_dir: Path | None,
-    asset_profile: PdfAssetProfile = "none",
-    asset_output_dir: Path | None = None,
-    allow_pdf_only: bool = False,
+def _validate_pdf_envelope(
+    pdf_bytes: bytes,
     source_url: str,
     final_url: str,
-    pdf_bytes: bytes,
-    suggested_filename: str | None = None,
-    expected_identity: Mapping[str, Any] | None = None,
-) -> PdfFetchResult:
+    suggested_filename: str | None,
+    *,
+    supplementary: bool = False,
+    original: bool = False,
+) -> tuple[int, str]:
     pdf_size = len(pdf_bytes)
     pdf_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
     document_role = non_article_pdf_reason(source_url) or non_article_pdf_reason(
         final_url
     )
-    if document_role:
+    if original and not document_role:
+        for url in (source_url, final_url):
+            path = urllib.parse.unquote(urllib.parse.urlsplit(url).path).lower()
+            if re.search(
+                r"/(?:article-supplement|suppl|downloadsupplement)(?:/|$)", path
+            ):
+                document_role = "pdf_supplement_only"
+        if re.search(r"(?:_si_\d+|sup-\d+)", suggested_filename or "", re.IGNORECASE):
+            document_role = "pdf_supplement_only"
+    if document_role and not supplementary:
         raise PdfFetchFailure(
             document_role,
             "PDF fallback returned a preview or supplementary file, not the full article.",
@@ -916,6 +924,241 @@ def pdf_fetch_result_from_bytes(
             },
         )
 
+    return pdf_size, pdf_sha256
+
+
+def _validate_pdf_path(
+    pdf_path: Path,
+    *,
+    pdf_bytes: bytes,
+    source_url: str,
+    final_url: str,
+    suggested_filename: str | None,
+    expected_identity: Mapping[str, Any] | None,
+    supplementary: bool = False,
+    require_backend: bool = False,
+) -> dict[str, Any]:
+    """Bounded structure, role and identity checks; never render article text."""
+    if require_backend:
+        try:
+            import pymupdf  # noqa: F401
+        except ImportError as exc:
+            raise PdfFetchFailure(
+                "missing_pymupdf", "PyMuPDF is required for original PDF validation."
+            ) from exc
+    pdf_size, pdf_sha256 = _validate_pdf_envelope(
+        pdf_bytes,
+        source_url,
+        final_url,
+        suggested_filename,
+        supplementary=supplementary,
+        original=require_backend,
+    )
+    if not pdf_bytes.startswith(b"%PDF-"):
+        pdf_path.unlink(missing_ok=True)
+        raise PdfFetchFailure(
+            "downloaded_file_not_pdf",
+            "PDF fallback did not produce a PDF file.",
+            details={
+                "source_url": source_url,
+                "suggested_filename": suggested_filename,
+            },
+        )
+
+    page_count = _pdf_page_count(pdf_path)
+    if page_count is None or page_count <= 0:
+        pdf_path.unlink(missing_ok=True)
+        raise PdfFetchFailure(
+            "invalid_pdf_structure",
+            "PDF fallback payload could not be parsed as a non-empty PDF document.",
+            details={
+                "source_url": source_url,
+                "final_url": final_url,
+                "pdf_bytes": pdf_size,
+                "pdf_sha256": pdf_sha256,
+            },
+        )
+    max_pages = _pdf_max_pages()
+    if page_count is not None and page_count > max_pages:
+        pdf_path.unlink(missing_ok=True)
+        raise PdfFetchFailure(
+            "pdf_too_many_pages",
+            "PDF fallback downloaded a PDF with too many pages.",
+            details={
+                "source_url": source_url,
+                "final_url": final_url,
+                "pdf_bytes": pdf_size,
+                "pdf_pages": page_count,
+                "max_pdf_pages": max_pages,
+                "pdf_sha256": pdf_sha256,
+            },
+        )
+
+    identity_evidence = _pdf_identity_evidence(pdf_path)
+    opening_lines = str(identity_evidence.get("opening_text") or "").splitlines()[:8]
+    if not supplementary and any(
+        re.fullmatch(
+            r"(?:supplementary|supplemental|supporting)\s+(?:information|materials?|data)",
+            line.strip(),
+            re.IGNORECASE,
+        )
+        for line in opening_lines
+    ):
+        pdf_path.unlink(missing_ok=True)
+        raise PdfFetchFailure(
+            "pdf_supplement_only",
+            "The PDF identifies itself as supplementary material, not the article body.",
+            details={"pdf_sha256": pdf_sha256},
+        )
+    identity_result = None
+    if (
+        not supplementary
+        and isinstance(expected_identity, Mapping)
+        and expected_identity
+    ):
+        identity_result = validate_extracted_identity(
+            expected_identity,
+            {},
+            identity_evidence,
+        )
+        if identity_result.mismatch:
+            pdf_path.unlink(missing_ok=True)
+            raise PdfFetchFailure(
+                "identity_mismatch",
+                identity_result.reason
+                or "PDF fallback response identity does not match the request.",
+                details={
+                    "identity": identity_result.to_dict(),
+                    "pdf_sha256": pdf_sha256,
+                },
+            )
+
+        # When a DOI is absent, use the requested title against bounded PDF
+        # text. This only validates identity; it never rewrites PDF output.
+        expected_title = str(expected_identity.get("title") or "")
+        if identity_result.status == "insufficient":
+
+            def identity_key(value: str) -> str:
+                return "".join(
+                    char
+                    for char in unicodedata.normalize("NFKC", value).casefold()
+                    if char.isalnum()
+                )
+
+            title_key = identity_key(expected_title)
+            opening_key = identity_key(str(identity_evidence.get("opening_text") or ""))
+            title_score = (
+                partial_ratio(title_key, opening_key, score_cutoff=92.0)
+                if len(opening_key) >= len(title_key) >= 20
+                else 0.0
+            )
+            if len(title_key) >= 20 and title_score >= 92.0:
+                identity_result = replace(
+                    identity_result,
+                    status="match",
+                    method="pdf_opening_title",
+                    confidence="medium",
+                    title_score=round(title_score, 2),
+                    reason=None,
+                )
+            else:
+                pdf_path.unlink(missing_ok=True)
+                raise PdfFetchFailure(
+                    "pdf_identity_unverified",
+                    "The PDF does not establish the requested article DOI or title.",
+                    details={
+                        "identity": identity_result.to_dict(),
+                        "pdf_sha256": pdf_sha256,
+                    },
+                )
+
+    return {
+        "pdf_sha256": pdf_sha256,
+        "pdf_bytes": pdf_size,
+        "pdf_pages": page_count,
+        "identity": identity_result.to_dict()
+        if identity_result is not None
+        else {
+            "status": "not_checked",
+            "method": identity_evidence.get("method", "none"),
+        },
+        "structure": "valid",
+        "role": "supplementary" if supplementary else "main_pdf",
+        "validation": {
+            "format": True,
+            "structure": True,
+            "size": True,
+            "role": True,
+            "identity": bool(
+                identity_result is not None and identity_result.status == "match"
+            ),
+        },
+    }
+
+
+def validate_original_pdf_bytes(
+    *,
+    pdf_bytes: bytes,
+    source_url: str,
+    final_url: str,
+    expected_identity: Mapping[str, Any] | None = None,
+    suggested_filename: str | None = None,
+    supplementary: bool = False,
+) -> PdfFetchResult:
+    """Validate original bytes without requiring or invoking pymupdf4llm."""
+    _validate_pdf_envelope(
+        pdf_bytes,
+        source_url,
+        final_url,
+        suggested_filename,
+        supplementary=supplementary,
+        original=True,
+    )
+    with tempfile.TemporaryDirectory(prefix="paper_fetch_raw_pdf_") as directory:
+        path = Path(directory) / "original.pdf"
+        path.write_bytes(pdf_bytes)
+        diagnostics = _validate_pdf_path(
+            path,
+            pdf_bytes=pdf_bytes,
+            source_url=source_url,
+            final_url=final_url,
+            expected_identity=expected_identity,
+            suggested_filename=suggested_filename,
+            supplementary=supplementary,
+            require_backend=True,
+        )
+    return PdfFetchResult(
+        source_url,
+        final_url,
+        pdf_bytes,
+        "",
+        suggested_filename,
+        diagnostics=diagnostics,
+    )
+
+
+def pdf_fetch_result_from_bytes(
+    *,
+    artifact_dir: Path | None,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
+    allow_pdf_only: bool = False,
+    raw_only: bool = False,
+    source_url: str,
+    final_url: str,
+    pdf_bytes: bytes,
+    suggested_filename: str | None = None,
+    expected_identity: Mapping[str, Any] | None = None,
+) -> PdfFetchResult:
+    if raw_only:
+        return validate_original_pdf_bytes(
+            pdf_bytes=pdf_bytes,
+            source_url=source_url,
+            final_url=final_url,
+            expected_identity=expected_identity,
+            suggested_filename=suggested_filename,
+        )
+    _validate_pdf_envelope(pdf_bytes, source_url, final_url, suggested_filename)
     temp_dir_cm = (
         tempfile.TemporaryDirectory(prefix="paper_fetch_pdf_")
         if artifact_dir is None
@@ -931,124 +1174,15 @@ def pdf_fetch_result_from_bytes(
             suggested_filename=suggested_filename,
         )
         pdf_path.write_bytes(pdf_bytes)
-        if not pdf_bytes.startswith(b"%PDF-"):
-            pdf_path.unlink(missing_ok=True)
-            raise PdfFetchFailure(
-                "downloaded_file_not_pdf",
-                "PDF fallback did not produce a PDF file.",
-                details={
-                    "source_url": source_url,
-                    "suggested_filename": suggested_filename,
-                },
-            )
-
-        page_count = _pdf_page_count(pdf_path)
-        if page_count is None or page_count <= 0:
-            pdf_path.unlink(missing_ok=True)
-            raise PdfFetchFailure(
-                "invalid_pdf_structure",
-                "PDF fallback payload could not be parsed as a non-empty PDF document.",
-                details={
-                    "source_url": source_url,
-                    "final_url": final_url,
-                    "pdf_bytes": pdf_size,
-                    "pdf_sha256": pdf_sha256,
-                },
-            )
-        max_pages = _pdf_max_pages()
-        if page_count is not None and page_count > max_pages:
-            pdf_path.unlink(missing_ok=True)
-            raise PdfFetchFailure(
-                "pdf_too_many_pages",
-                "PDF fallback downloaded a PDF with too many pages.",
-                details={
-                    "source_url": source_url,
-                    "final_url": final_url,
-                    "pdf_bytes": pdf_size,
-                    "pdf_pages": page_count,
-                    "max_pdf_pages": max_pages,
-                    "pdf_sha256": pdf_sha256,
-                },
-            )
-
-        identity_evidence = _pdf_identity_evidence(pdf_path)
-        opening_lines = str(identity_evidence.get("opening_text") or "").splitlines()[
-            :8
-        ]
-        if any(
-            re.fullmatch(
-                r"(?:supplementary|supplemental|supporting)\s+(?:information|materials?|data)",
-                line.strip(),
-                re.IGNORECASE,
-            )
-            for line in opening_lines
-        ):
-            pdf_path.unlink(missing_ok=True)
-            raise PdfFetchFailure(
-                "pdf_supplement_only",
-                "The PDF identifies itself as supplementary material, not the article body.",
-                details={"pdf_sha256": pdf_sha256},
-            )
-        identity_result = None
-        if isinstance(expected_identity, Mapping) and expected_identity:
-            identity_result = validate_extracted_identity(
-                expected_identity,
-                {},
-                identity_evidence,
-            )
-            if identity_result.mismatch:
-                pdf_path.unlink(missing_ok=True)
-                raise PdfFetchFailure(
-                    "identity_mismatch",
-                    identity_result.reason
-                    or "PDF fallback response identity does not match the request.",
-                    details={
-                        "identity": identity_result.to_dict(),
-                        "pdf_sha256": pdf_sha256,
-                    },
-                )
-
-            # When a DOI is absent, use the requested title against bounded PDF
-            # text. This only validates identity; it never rewrites PDF output.
-            expected_title = str(expected_identity.get("title") or "")
-            if identity_result.status == "insufficient":
-
-                def identity_key(value: str) -> str:
-                    return "".join(
-                        char
-                        for char in unicodedata.normalize("NFKC", value).casefold()
-                        if char.isalnum()
-                    )
-
-                title_key = identity_key(expected_title)
-                opening_key = identity_key(
-                    str(identity_evidence.get("opening_text") or "")
-                )
-                title_score = (
-                    partial_ratio(title_key, opening_key, score_cutoff=92.0)
-                    if len(opening_key) >= len(title_key) >= 20
-                    else 0.0
-                )
-                if len(title_key) >= 20 and title_score >= 92.0:
-                    identity_result = replace(
-                        identity_result,
-                        status="match",
-                        method="pdf_opening_title",
-                        confidence="medium",
-                        title_score=round(title_score, 2),
-                        reason=None,
-                    )
-                else:
-                    pdf_path.unlink(missing_ok=True)
-                    raise PdfFetchFailure(
-                        "pdf_identity_unverified",
-                        "The PDF does not establish the requested article DOI or title.",
-                        details={
-                            "identity": identity_result.to_dict(),
-                            "pdf_sha256": pdf_sha256,
-                        },
-                    )
-
+        validation = _validate_pdf_path(
+            pdf_path,
+            pdf_bytes=pdf_bytes,
+            source_url=source_url,
+            final_url=final_url,
+            suggested_filename=suggested_filename,
+            expected_identity=expected_identity,
+        )
+        pdf_sha256 = validation["pdf_sha256"]
         warnings: list[str] = []
         render_cache_status = "not_started"
         try:
@@ -1092,17 +1226,10 @@ def pdf_fetch_result_from_bytes(
             assets=[dict(item) for item in render_result.assets],
             warnings=warnings,
             diagnostics={
-                "pdf_sha256": pdf_sha256,
-                "pdf_bytes": pdf_size,
-                "pdf_pages": page_count,
-                "identity": (
-                    identity_result.to_dict()
-                    if identity_result is not None
-                    else {
-                        "status": "not_checked",
-                        "method": identity_evidence.get("method", "none"),
-                    }
-                ),
+                **{
+                    key: validation[key]
+                    for key in ("pdf_sha256", "pdf_bytes", "pdf_pages", "identity")
+                },
                 "pdf_markdown_cache": {"status": render_cache_status},
             },
         )

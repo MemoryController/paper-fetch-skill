@@ -101,6 +101,180 @@ class BrowserWorkflowClient(ProviderClient):
         self.browser_user_agent = build_browser_user_agent(env)
         self.deps = deps
 
+    def download_primary_pdf(
+        self,
+        doi: str,
+        metadata: ProviderMetadata,
+        *,
+        context: RuntimeContext | None = None,
+    ):
+        """Actively acquire the publisher PDF, without the HTML article waterfall."""
+        from .._pdf_fallback import PdfRequestContext
+
+        context = self._runtime_context(context)
+        context.raise_if_cancelled()
+        runtime = self.deps.load_runtime_config(self.env, provider=self.name, doi=doi)
+        self.deps.ensure_runtime_ready(runtime)
+        candidates = self.pdf_candidates(doi, metadata)
+        seed = self.deps.warm_browser_context(
+            candidates,
+            publisher=self.name,
+            config=runtime,
+            runtime_context=context,
+            lightweight=True,
+        )
+        import tempfile
+
+        with tempfile.TemporaryDirectory(
+            prefix="paper_fetch_original_browser_"
+        ) as staging:
+            result = self.deps.fetch_pdf_with_browser(
+                candidates,
+                artifact_dir=Path(staging),
+                raw_only=True,
+                browser_config=runtime,
+                browser_cookies=list(seed.get("browser_cookies") or []),
+                browser_user_agent=seed.get("browser_user_agent")
+                or self.browser_user_agent,
+                referer=seed.get("browser_final_url"),
+                request=PdfRequestContext(
+                    expected_identity={**dict(metadata), "doi": doi},
+                    runtime=context,
+                    provider_name=self.name,
+                ),
+            )
+        route = next(
+            route.name
+            for route in provider_routes(self.name)
+            if route.kind == "pdf" and route.transport == "browser"
+        )
+        # Original-file phases share only this request/client/identity's accepted
+        # seed. Do not persist auth state or change the old fulltext waterfall.
+        if getattr(seed, "accepted", False):
+            context.set_session_cache(self._original_browser_seed_key(doi), dict(seed))
+        return replace(result, diagnostics={**result.diagnostics, "route": route})
+
+    def _original_browser_seed_key(self, doi: str) -> tuple[Any, ...]:
+        return ("original_downloads", "browser_seed", self, doi.strip().casefold())
+
+    def _original_supplementary_assets(
+        self, html: str, source_url: str
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError(
+            "No original supplementary scope owner for this provider."
+        )
+
+    def discover_supplementary_files(
+        self,
+        doi: str,
+        metadata: ProviderMetadata,
+        *,
+        context: RuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        from .originals import bind_supplementary_assets, validate_discovery_identity
+
+        if (
+            type(self)._original_supplementary_assets
+            is BrowserWorkflowClient._original_supplementary_assets
+        ):
+            return {
+                "status": "not_supported",
+                "assets": [],
+                "source_url": None,
+                "browser_context_seed": None,
+                "diagnostics": {"code": "NOT_SUPPORTED"},
+            }
+        context = self._runtime_context(context)
+        context.raise_if_cancelled()
+        runtime = self.deps.load_runtime_config(self.env, provider=self.name, doi=doi)
+        self.deps.ensure_runtime_ready(runtime)
+        profile = self.require_profile()
+        fetch_kwargs: dict[str, Any] = {}
+        original_seed = context.get_session_cache(self._original_browser_seed_key(doi))
+        if isinstance(original_seed, Mapping) and original_seed:
+            fetch_kwargs["browser_context_seed"] = original_seed
+        if profile.html_readiness is not None:
+            fetch_kwargs["readiness"] = profile.html_readiness
+        result = self.deps.fetch_html_with_browser(
+            self.html_candidates(doi, metadata),
+            publisher=self.name,
+            config=runtime,
+            runtime_context=context,
+            **fetch_kwargs,
+        )
+        identity = validate_discovery_identity(
+            result.html, doi, metadata, result.final_url
+        )
+        assets = bind_supplementary_assets(
+            self._original_supplementary_assets(result.html, result.final_url),
+            doi,
+            result.final_url,
+        )
+        return {
+            "status": "ok",
+            "assets": assets,
+            "source_url": result.final_url,
+            "browser_context_seed": dict(result.browser_context_seed or {}),
+            "diagnostics": {"identity": identity},
+        }
+
+    def download_supplementary_files(
+        self,
+        doi: str,
+        metadata: Mapping[str, Any],
+        discovery: Mapping[str, Any],
+        output_dir: Path,
+        *,
+        context: RuntimeContext | None = None,
+    ) -> dict[str, Any]:
+        from ...extraction.html.assets import AssetDownloadOptions, SUPPLEMENTARY_KIND
+
+        from .originals import supplementary_download_report
+
+        context = self._runtime_context(context, output_dir=output_dir)
+        context.raise_if_cancelled()
+        assets = list(discovery.get("assets") or [])
+        if any(
+            asset.get("paper_doi") != doi
+            or asset.get("discovery_url") != discovery.get("source_url")
+            for asset in assets
+        ):
+            raise ValueError("supplementary_source_binding_mismatch")
+        seed = dict(discovery.get("browser_context_seed") or {})
+        runtime = self.deps.load_runtime_config(self.env, provider=self.name, doi=doi)
+        self.deps.ensure_runtime_ready(runtime)
+        fetcher = self.deps._build_shared_browser_file_fetcher(
+            browser_context_seed_getter=lambda: seed,
+            seed_urls_getter=lambda: [discovery["source_url"]],
+            browser_user_agent=self.browser_user_agent,
+            runtime_context=context,
+            browser_options=BrowserDocumentFetcherOptions(runtime_config=runtime),
+        )
+        try:
+            result = self.deps.download_assets(
+                SUPPLEMENTARY_KIND,
+                self.transport,
+                article_id=doi,
+                assets=assets,
+                output_dir=output_dir,
+                user_agent=self.user_agent,
+                asset_profile="all",
+                options=AssetDownloadOptions(
+                    original_files=True,
+                    browser_context_seed=seed,
+                    file_document_fetcher=fetcher,
+                    fetch_policy="browser_only",
+                    asset_download_concurrency=1,
+                    provider_name=self.name,
+                    asset_budget=context.asset_budget,
+                    artifact_store=context.artifact_store,
+                    runtime_context=context,
+                ),
+            )
+            return supplementary_download_report(result, assets, self.name)
+        finally:
+            fetcher.close()
+
     def probe_status(self):
         return self.deps.probe_runtime_status(self.env, provider=self.name)
 
